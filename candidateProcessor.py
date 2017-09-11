@@ -1,4 +1,5 @@
 import MorphoPy
+import nltk
 
 class CandidateProcessor:
 
@@ -16,7 +17,6 @@ class CandidateProcessor:
 				candidates = self.buildCandidatesForSentence( sentence )
 				allCandidates.append( candidates )
 				i += 1
-		self.g.close()
 		return allCandidates
 
 	def buildCandidatesForSentence(self, sentence):
@@ -24,13 +24,14 @@ class CandidateProcessor:
 		candidates = []
 		for word in words:
 			curCandidates = self.lp.SuggestExp3( word, self.wordVarCount )
+			
 			#если ничего не можем предложить, используем исходный вариант
-			if len(curCandidates) == 0:
+			if len(curCandidates[0]) == 0:
 				curCandidates = [[word], 0]
 			#если слово есть в словаре и не попало в выдачу SuggestExp3, добавляем его в список кандидатов
-			elif curCandidates[0][1] != 0 and self.lp.CheckWord(word)[1]:
+			elif curCandidates[1][0] != 0 and self.lp.CheckWord(word)["result"]:
 				curCandidates = [[word], 0]
-			candidates.append( curCandidate )
+			candidates.append( curCandidates )
 		return candidates
 				
 	def writeCandidates(self, candidates, path):
@@ -43,10 +44,14 @@ class CandidateProcessor:
 					f.write("\n")
 
 def main():
+	args = sys.argv[1:]
+	if len(args) != 2:
+        sys.exit("Использование: candidateProcessor.py source_file candidate_file\n"
+                 "source_file: исходный файл c предложениями\n"
+                 "candidate_file: выходной файл с кандидатами\n"
+                 )
+    source_file, candidate_file = args
 	candidateProcessor = CandidateProcessor()
 	candidates = candidateProcessor.buildCandidatesForCorpus("source_sents.txt")
 	candidateProcessor.writeCandidates(candidates, "candidates.txt")
 	
-
-if __name__ == "__main__":
-    main()
