@@ -4,8 +4,6 @@ import copy
 import re
 import kenlm
 import heapq
-
-
 import numpy as np
 
 class KenLm:
@@ -24,14 +22,15 @@ class KenLm:
 
 class Hypothesis:
 
-	def __init__(self, prob, err, candNumbers, prevHypthNumber):
+	def __init__(self, prob, err, candNumbers, prevHypthNumber, isOOV):
 		self.prob = prob
 		self.candNumbers = candNumbers
 		self.err = err
 		self.prevHypthNumber = prevHypthNumber
+		self.isOOV = isOOV
 
 	def __lt__(self, other):
-		return (self.prob + self.err) < (other.prob + other.err)
+		return (0.8*self.prob + 0.2*self.err) < (0.8*other.prob + 0.2*other.err)
 
 
 class RangeProcessor:
@@ -44,7 +43,12 @@ class RangeProcessor:
 		self.sentCandidatesCount = sentCandidatesCount
 		self.lm = languageModel
 
-
+	def rangeCandidatesForCorpus(self, path):
+		allCandidates = self.readCandidates(path)
+		rangedCandidates = []
+		for candidate in allCandidates:
+			rangedCandidates.append(self.rangeCandidates(candidate))
+		return rangedCandidates
 
 	def readCandidates(self, path):
 		allCandidates = []
@@ -81,7 +85,7 @@ class RangeProcessor:
 
 		#список гипотез для каждого слова ограничен параметром 
 		hypothesis = [[] for i in range(len(candidates) + 1)]
-		hypothesis[0].append(Hypothesis(0, 0, [], -1))
+		hypothesis[0].append(Hypothesis(0, 0, [], -1, 0))
 		for i, wordCandidates in enumerate(candidates):
 			candidateFeatures = []
 			for l, hypths in enumerate(hypothesis[i]):
@@ -99,7 +103,7 @@ class RangeProcessor:
 
 					if len(hypothesis[i+1]) < self.sentCandidatesCount:			
 						heapq.heappush(hypothesis[i+1],
-						 Hypothesis(prob, err, hypths.candNumbers[candIndex:]+[j],l))
+						 Hypothesis(prob, err, hypths.candNumbers[candIndex:]+[j],l, hypths.err!=0))
 					elif len(hypothesis[i+1]) == self.sentCandidatesCount:
 						if	hypothesis[i+1][0].prob + hypothesis[i+1][0].err < prob + err:
 							heapq.heapreplace(hypothesis[i+1], 
@@ -117,5 +121,5 @@ class RangeProcessor:
 				curNumber += 1
 				curHyp = hypothesis[-curNumber][curHyp.prevHypthNumber]
 			sentence = sentence[::-1]
-			allSentences.append([copy.deepcopy(sentence), sentProb, sentErr ])
+			allSentences.append([copy.deepcopy(sentence), sentProb, sentErr,  ])
 		return allSentences

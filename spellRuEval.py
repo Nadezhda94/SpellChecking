@@ -2,6 +2,33 @@ from rangeProcessor import KenLm, Hypothesis, RangeProcessor
 from featureProcessor import FeatureProcessor
 import nltk
 from sklearn.linear_model import LogisticRegression
+import sys
+from BaseModel import BaseModel
+from Evaluator import BaseEvaluator
+
+
+
+
+
+def generateTestSample(candidateManager):
+	sentences = readCorrectSentences("test_sample_testset.txt")
+	allCandidates = candidateManager.readCandidates("candidates_test.txt")
+	sentences = []
+	for candidate in allCandidates:
+		sentences.append(candidateManager.rangeCandidates(candidate))
+	return sentences
+	
+def compareSents(candidate, realSent):
+	isRight = True
+	if len(candidate) == len(realSent):		
+		for j in range(len(candidate)):
+			if candidate[j] != realSent[j]:
+				isRight = False
+				break
+	else:
+		isRight = False
+	return int(isRight)
+
 
 def readCorrectSentences(path):
 	sentences = []
@@ -29,81 +56,65 @@ def collectYLabels(sentences, correctSents):
 		Y.append(1)
 	return Y
 
-
-def generateTestSample(candidateManager):
-	sentences = readCorrectSentences("test_sample_testset.txt")
-	allCandidates = candidateManager.readCandidates("candidates_test.txt")
-	sentences = []
-	for candidate in allCandidates:
-		sentences.append(candidateManager.rangeCandidates(candidate))
-	return sentences
-	
-def compareSents(candidate, realSent):
-	isRight = True
-	if len(candidate) == len(realSent):		
-		for j in range(len(candidate)):
-			if candidate[j] != realSent[j]:
-				isRight = False
-				break
-	else:
-		isRight = False
-	return int(isRight)
-
 def main():
-	lm = KenLm("text.arpa", 3)
+	args = sys.argv[1:]
+	if len(args) != 5:
+		sys.exit("Использование: evaluate.py languageModel sourceCandidateFile sourceCorrectFile testCandidateFile testCorrectFile\n"
+        		"languageModel: языковая модель\n"
+        		"sourceCandidateFile: файл c исправлениями-кандидатами для обучающей выборки\n"
+        		"sourceCorrectFile: файл с эталонными исправлениями для обучающей выборки\n"
+        		"testCandidateFile: файл с исправлениями-кандидатами для тестовой выборки\n"
+        		"testCorrectFile: файл с эталонными исправлениями для тестовой выборки\n")
+	languageModel, sourceCandidateFile, sourceCorrectFile, testCandidateFile, testCorrectFile = args
+	lm  = KenLm(languageModel, 3)
 	rangeProcessor = RangeProcessor(lm)
-	
-	allCandidates = rangeProcessor.readCandidates("candidates.txt")
-	rangedCandidates = []
-	for candidate in allCandidates:
-		rangedCandidates.append(rangeProcessor.rangeCandidates(candidate))
-
-	correctSents = readCorrectSentences("corrected_sents.txt")
-
 	fp = FeatureProcessor(lm)
 
-	XTrain = []
-	for i, sent in enumerate(rangedCandidates):
-		for candidate in sent:
-			XTrain.append(candidate[1:]+[len(candidate[0])])	
-	
-	XTrain += fp.generateFeatures(correctSents)
+	sourceXTrain = []
+	sourceXTest = []
 
+	with open("source_sents.txt", "r", encoding="utf-8") as f:
+		for line in f:
+			sourceXTrain.append(nltk.word_tokenize(line.strip("\n")))
+
+	with open("test_sample_testset.txt", "r", encoding="utf-8") as f:
+		for line in f:
+			sourceXTest.append(nltk.word_tokenize(line.strip("\n")))
+
+
+	model = BaseModel(lm, LogisticRegression())
+	#XTrain, YTrain, XTest, YTest = model.makeSample(sourceCandidateFile, sourceCorrectFile, testCandidateFile, testCorrectFile)
+	rangedCandidates = rangeProcessor.rangeCandidatesForCorpus(sourceCandidateFile)
+	correctSents = readCorrectSentences(sourceCorrectFile)
+	
+	#формируем обучающую выборку
+	XTrain = fp.generateFeaturesForSents(rangedCandidates, sourceXTrain)
+	XTrain += fp.generateFeaturesForCorrectSents(correctSents)
 	YTrain = collectYLabels(rangedCandidates, correctSents)
 
-	#print(XTrain)
-	lr = LogisticRegression()
-	lr.fit(XTrain, YTrain)
+	print(XTrain[:10])
 
-	testCandidates = rangeProcessor.readCandidates("candidates_test.txt")
-	testRangedCandidates = []
-	for candidate in testCandidates:
-		testRangedCandidates.append(rangeProcessor.rangeCandidates(candidate))
+	# формируем тестовую выборку
+	testRangedCandidates = rangeProcessor.rangeCandidatesForCorpus(testCandidateFile)
 
-	correctSents = readCorrectSentences("test_sample_testset.txt")
-	
 	XTest = []
-	for i, sent in enumerate(testRangedCandidates):
-		for candidate in sent:
-			XTest.append(candidate[1:]+[len(candidate[0])])	
+	for sent, sourceSent in zip(testRangedCandidates, sourceXTest):
+		XTest.append(fp.generateFeaturesForCandidates(sent, sourceSent))
+	YTest = readCorrectSentences(testCorrectFile)
+	model.fit(XTrain, YTrain)
+	scores = model.predict(XTest)
 
-	YTest = readCorrectSentences("corr_sample_testset.txt")
+	simpleScores = [[sum(candidate[1:]) for candidate in sent] for sent in XTest]
 
-	#вывод, метрики
-	corrSentsNumber = 0
-	resFile = open("test_result.txt", "w", encoding = "utf-8")
-	for i, sent in enumerate(testRangedCandidates):
-		result = []
-		probToResult = {}
-		for candidate in sent:
-			result.append(lr.predict_proba([candidate[1:]+[len(candidate[0])]])[0][1])
-			probToResult[result[-1]] = len(result) - 1
-		result = sorted(result, reverse=True)
-		#for res in result:
-		resFile.write(" ".join(sent[probToResult[result[0]]][0])+"\n")
-		corrSentsNumber += compareSents(sent[probToResult[result[0]]][0], YTest[i])
-	print("number of corrected sentences: ", corrSentsNumber)
-	print("accuracy: ", float(corrSentsNumber)/len(correctSents))
+	evaluator = BaseEvaluator()
+	tops = evaluator.getStatistics(testRangedCandidates, scores, YTest)
+
+	corrSentsNumberTop1 = tops[0]
+	corrSentsNumberTopN = sum([tops[i] for i in tops])
+	print("number of top1 corrected sentences: ", corrSentsNumberTop1)
+	print("number of topN corrected sentences: ", corrSentsNumberTopN)
+	print("accuracy top1: ", float(corrSentsNumberTop1)/len(XTest))
+	print("accuracy topN: ", float(corrSentsNumberTopN)/len(XTest))
 
 
 if __name__ == "__main__":
